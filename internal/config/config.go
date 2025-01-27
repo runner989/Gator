@@ -2,7 +2,7 @@ package config
 
 import (
 	"encoding/json"
-	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 )
@@ -10,57 +10,55 @@ import (
 const configFileName = ".gatorconfig.json"
 
 type Config struct {
-	DbUrl           string `json:"db_url"`
-	CurrentUserName string `json:"current_user_name,omitempty"`
+	DbUrl       string `json:"db_url"`
+	CurrentUser string `json:"current_user"`
 }
 
-func getConfigFilePath() (string, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	return filepath.Join(homeDir, configFileName), nil
+func getUserHomeDir() (string, error) {
+	return os.UserHomeDir()
 }
 
 func Read() (Config, error) {
-	configPath, err := getConfigFilePath()
+	homeDir, err := getUserHomeDir()
 	if err != nil {
 		return Config{}, err
 	}
-	file, err := os.Open(configPath)
+	fileName := filepath.Join(homeDir, configFileName)
+	configFile, err := os.ReadFile(fileName)
 	if err != nil {
-		return Config{}, errors.New("could not open config file")
+		fmt.Println("Error reading config file:", err)
+		panic(err)
 	}
-	defer file.Close()
-
 	var cfg Config
-	decoder := json.NewDecoder(file)
-	if err := decoder.Decode(&cfg); err != nil {
-		return Config{}, errors.New("could not decode JSON")
+	err = json.Unmarshal(configFile, &cfg)
+	if err != nil {
+		return Config{}, err
 	}
 	return cfg, nil
 }
 
-func (cfg *Config) SetUser(userName string) error {
-	cfg.CurrentUserName = userName
-	return write(*cfg)
-}
-
-func write(cfg Config) error {
-	configPath, err := getConfigFilePath()
+func (cfg *Config) SetUser(user string) error {
+	cfg.CurrentUser = user
+	homeDir, err := getUserHomeDir()
 	if err != nil {
 		return err
 	}
-
-	file, err := os.OpenFile(configPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
+	fileName := filepath.Join(homeDir, configFileName)
+	file, err := os.Create(fileName)
 	if err != nil {
-		return errors.New("could not open config file for writing")
+		return err
 	}
-	defer file.Close()
+	defer func(file *os.File) {
+		err := file.Close()
+		if err != nil {
+
+		}
+	}(file)
 
 	encoder := json.NewEncoder(file)
-	if err := encoder.Encode(cfg); err != nil {
-		return errors.New("could not encode config to JSON")
+	err = encoder.Encode(cfg)
+	if err != nil {
+		return err
 	}
 	return nil
 }
