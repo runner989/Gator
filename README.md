@@ -54,7 +54,7 @@ The binary is now available globally as `gator`.
 
 ## Configuration file
 
-Gator reads a tiny JSON file called `` from the working directory.  Example:
+Gator reads a tiny JSON file called `.gatorconfig.json` from the working directory.  Example:
 
 ```json
 {
