@@ -86,8 +86,6 @@ $ gator <command> [args]
 | `users`               | `gator users`                                                  | list all registered users                            |
 | `reset`               | `gator reset`                                                  | **danger:** truncate users, feeds, follows & posts   |
 
-Run `` without arguments to see a short usage message.
-
 ---
 
 ## Development workflow
