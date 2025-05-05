@@ -8,11 +8,15 @@ import (
 	"encoding/xml"
 	"fmt"
 	"github.com/google/uuid"
+	"github.com/lib/pq"
 	_ "github.com/lib/pq"
 	"html"
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -44,6 +48,26 @@ type RSSItem struct {
 	Link        string `xml:"link"`
 	Description string `xml:"description"`
 	PubDate     string `xml:"pubDate"`
+}
+
+var pubLayouts = []string{
+	time.RFC1123Z,                    // Mon, 02 Jan 2006 15:04:05 -0700
+	time.RFC1123,                     // Mon, 02 Jan 2006 15:04:05 MST
+	time.RFC822Z,                     // 02 Jan 06 15:04 -0700
+	time.RFC822,                      // 02 Jan 06 15:04 MST
+	time.RFC3339,                     // 2006-01-02T15:04:05Z07:00
+	"Mon, 2 Jan 2006 15:04:05 -0700", // single‑digit day
+}
+
+func parsePubTime(raw string) (sql.NullTime, error) {
+	raw = strings.TrimSpace(raw)
+	for _, l := range pubLayouts {
+		if t, err := time.Parse(l, raw); err == nil {
+			return sql.NullTime{Time: t.UTC(), Valid: true}, nil
+		}
+	}
+	// Unknown format - return NULL, but not an error
+	return sql.NullTime{Valid: false}, nil
 }
 
 func (c *commands) register(name string, f func(*state, command) error) {
@@ -224,18 +248,35 @@ func fetchFeed(ctx context.Context, feedURL string) (*RSSFeed, error) {
 }
 
 func handlerAgg(s *state, cmd command) error {
-	if len(cmd.name) == 0 {
+	if len(cmd.name) < 1 {
 		fmt.Printf("invalid aggregation command")
 		return fmt.Errorf("invalid aggregation command")
 	}
-	ctx := context.Background()
-	feedURL := "https://www.wagslane.dev/index.xml"
-	feed, err := fetchFeed(ctx, feedURL)
+	time_between_reqs := cmd.args[0]
+	timeBetweenRequests, err := time.ParseDuration(time_between_reqs)
 	if err != nil {
+		fmt.Printf("invalid time between reqs aggregation command")
 		return err
 	}
-	fmt.Printf("%+v\n", feed)
-	return nil
+	fmt.Printf("Collecting feeds every %s\n", timeBetweenRequests.String())
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt)
+
+	ticker := time.NewTicker(timeBetweenRequests)
+	defer ticker.Stop()
+
+	for {
+		scrapeFeeds(s)
+
+		select {
+		case <-ticker.C:
+			continue
+		case <-stop:
+			fmt.Println("stopping aggregation")
+			return nil
+		}
+	}
 }
 
 func handlerAddFeed(s *state, cmd command, user database.User) error {
@@ -388,6 +429,96 @@ func handlerUnfollow(s *state, cmd command, user database.User) error {
 	return nil
 }
 
+func scrapeFeeds(s *state) {
+	ctx := context.Background()
+	/*
+		Get the next feed to fetch from the DB.
+		Mark it as fetched.
+		Fetch the feed using the URL (we already wrote this function)
+		Iterate over the items in the feed and print their titles to the console.
+	*/
+	nextFeed, err := s.db.GetNextFeedToFetch(ctx)
+	if err != nil {
+		fmt.Printf("Failed to get next feed to fetch: %+v\n", err)
+		return
+	}
+
+	err = s.db.MarkFeedFetched(ctx, nextFeed.ID)
+	if err != nil {
+		fmt.Printf("Failed to mark feed: %+v\n", err)
+		return
+	}
+	feed, err := fetchFeed(ctx, nextFeed.Url)
+	if err != nil {
+		fmt.Printf("Failed to fetch feed: %+v\n", err)
+		return
+	}
+	fmt.Printf("\n[%s] (%ss)\n", feed.Channel.Title, nextFeed.Url)
+	for _, item := range feed.Channel.Item {
+		published, _ := parsePubTime(item.PubDate)
+		params := database.CreatePostParams{
+			ID:          uuid.New(),
+			CreatedAt:   time.Now().UTC(),
+			UpdatedAt:   time.Now().UTC(),
+			Title:       item.Title,
+			Url:         item.Link,
+			Description: sql.NullString{String: item.Description, Valid: item.Description != ""},
+			PublishedAt: published,
+			FeedID:      nextFeed.ID,
+		}
+
+		if err := s.db.CreatePost(ctx, params); err != nil {
+			if pgErr, ok := err.(*pq.Error); ok && pgErr.Code == "23505" {
+				continue
+			}
+			fmt.Printf("Failed to create post: %+v\n", err)
+		}
+		fmt.Printf(" • %s\n", item.Title)
+	}
+	return
+}
+
+func handlerBrowse(s *state, cmd command, user database.User) error {
+	limit := 2
+	if len(cmd.args) >= 1 {
+		if v, err := strconv.Atoi(cmd.args[0]); err == nil && v > 0 {
+			limit = v
+		}
+	}
+
+	ctx := context.Background()
+	userPostsParams := database.GetPostsForUserParams{
+		UserID: user.ID,
+		Limit:  int32(limit),
+	}
+
+	posts, err := s.db.GetPostsForUser(ctx, userPostsParams)
+	if err != nil {
+		return err
+	}
+
+	if len(posts) == 0 {
+		fmt.Println("No posts yet - try addfeed & agg first.")
+		return nil
+	}
+
+	for _, post := range posts {
+		fmt.Printf("\n%s\n%s\nPublished: %s\n", post.Title, post.Url,
+			func() string {
+				if post.PublishedAt.Valid {
+					return post.PublishedAt.Time.Format(time.RFC1123)
+				}
+				return "unknown"
+			}())
+	}
+	return nil
+}
+
+func handlerPosts(s *state, cmd command, user database.User) error {
+	//ctx := context.Background()
+	return nil
+}
+
 func main() {
 	cfg, err := config.Read()
 	if err != nil {
@@ -413,6 +544,8 @@ func main() {
 	appCommands.register("follow", middlewareLoggedIn(handlerFollow))
 	appCommands.register("following", middlewareLoggedIn(handlerFollowing))
 	appCommands.register("unfollow", middlewareLoggedIn(handlerUnfollow))
+	appCommands.register("posts", middlewareLoggedIn(handlerPosts))
+	appCommands.register("browse", middlewareLoggedIn(handlerBrowse))
 	args := os.Args[1:]
 	if len(args) < 2 && args[0] == "login" {
 		fmt.Println("Usage: Gator login {username}")

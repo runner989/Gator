@@ -60,3 +60,15 @@ SELECT
 FROM deleted_follow
 JOIN users ON users.id = deleted_follow.user_id
 JOIN feeds ON feeds.id = deleted_follow.feed_id;
+
+-- name: MarkFeedFetched :exec
+UPDATE feeds
+SET updated_at = Now(),
+    last_fetched_at = Now()
+WHERE feeds.id = $1;
+
+-- name: GetNextFeedToFetch :one
+SELECT *
+FROM feeds
+ORDER BY last_fetched_at NULLS FIRST,
+         updated_at LIMIT 1;
