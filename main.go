@@ -1,12 +1,12 @@
 package main
 
 import (
-	"Gator/internal/config"
-	"Gator/internal/database"
 	"context"
 	"database/sql"
 	"encoding/xml"
 	"fmt"
+	"gator/internal/config"
+	"gator/internal/database"
 	"github.com/google/uuid"
 	"github.com/lib/pq"
 	_ "github.com/lib/pq"
