@@ -5,8 +5,7 @@ Gator is a small command‑line application (written in Go) that lets you:
 - create users and switch between them
 - add RSS feeds and follow / unfollow them
 - automatically gather new posts in the background
-- browse your personal timeline of articles
-
+- browse, sort and paginate your timeline – right from the terminal
 ---
 
 ## Prerequisites
@@ -73,19 +72,41 @@ Gator reads a tiny JSON file called `.gatorconfig.json` from the home directory.
 $ gator <command> [args]
 ```
 
-### Common commands
+## Command reference (built‑in help)
 
-| Command               | Example                                                        | What it does                                         |
-| --------------------- |----------------------------------------------------------------|------------------------------------------------------|
-| `register`            | `gator register alice`                                         | create a new user                                    |
-| `login`               | `gator login alice`                                            | switch current user                                  |
-| `addfeed`             | `gator addfeed "Hacker News" https://news.ycombinator.com/rss` | insert a feed *and* auto‑follow it                   |
-| `agg`                 | `gator agg 1m`                                                 | start the endless collector (press `Ctrl+C` to quit) |
-| `browse`              | `gator browse 5`                                               | show the 5 newest posts for the logged‑in user       |
-| `follow` / `unfollow` | `gator follow https://techcrunch.com/feed/`                    | change subscriptions                                 |
-| `users`               | `gator users`                                                  | list all registered users                            |
-| `reset`               | `gator reset`                                                  | **danger:** truncate users, feeds, follows & posts   |
+Run `gator help` or simply `gator` with no arguments to see this list at any time.
 
+| Command                     | Example                                                        | What it does                                                                |
+|-----------------------------|----------------------------------------------------------------|-----------------------------------------------------------------------------|
+| `register <name>`           | `gator register alice`                                         | create a new user                                                           |
+| `login <name>`              | `gator login alice`                                            | switch current user                                                         |
+| `addfeed <title> <url>`     | `gator addfeed "Hacker News" https://news.ycombinator.com/rss` | insert a feed *and* auto‑follow it                                          |
+| `agg <interval>`            | `gator agg 1m`                                                 | start the endless collector (press `Ctrl+C` to quit)                        |
+| `browse [flags]`            | `gator browse --limit=5 --sort=title --page=2`                 | show the 5 newest posts, sorted by title, on page 2, for the logged‑in user |
+| `follow` / `unfollow` `<feed>` | `gator follow https://techcrunch.com/feed/`                    | change subscriptions                                                        |
+| `users`                     | `gator users`                                                  | list all registered users                                                   |
+| `reset`                     | `gator reset`                                                  | **danger:** truncate users, feeds, follows & posts                          |
+
+---
+
+## Quick start
+
+```bash
+# 1  Create a user and log in
+$ gator register alice
+$ gator login alice
+
+# 2  Add two feeds
+$ gator addfeed "Hacker News" https://news.ycombinator.com/rss
+$ gator addfeed "TechCrunch"  https://techcrunch.com/feed/
+
+# 3  Start the aggregator in another terminal
+$ gator agg 1m
+# (Let it run for a minute; it prints as it pulls.)
+
+# 4  Browse your timeline – newest five posts, by time, first page
+$ gator browse --limit=5 --sort=time --page=0
+```
 ---
 
 ## Development workflow
@@ -106,4 +127,3 @@ make test
 ## License
 
 MIT © runner989 2025
-

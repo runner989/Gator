@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/xml"
+	"flag"
 	"fmt"
 	"gator/internal/config"
 	"gator/internal/database"
@@ -15,7 +16,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -479,20 +479,27 @@ func scrapeFeeds(s *state) {
 }
 
 func handlerBrowse(s *state, cmd command, user database.User) error {
-	limit := 2
-	if len(cmd.args) >= 1 {
-		if v, err := strconv.Atoi(cmd.args[0]); err == nil && v > 0 {
-			limit = v
-		}
+	fs := flag.NewFlagSet("browse", flag.ContinueOnError)
+	limit := fs.Int("limit", 2, "max posts per page")
+	sort := fs.String("sort", "time", "sort by: time | title")
+	page := fs.Int("page", 0, "page number (0 = first)")
+	if err := fs.Parse(cmd.args); err != nil {
+		return err
+	}
+
+	if *sort != "time" && *sort != "title" {
+		return fmt.Errorf("invalid --sort value: %q (use \"time\" or \"title\")", *sort)
 	}
 
 	ctx := context.Background()
-	userPostsParams := database.GetPostsForUserParams{
+	params := database.GetPostsForUserPaginatedParams{
 		UserID: user.ID,
-		Limit:  int32(limit),
+		Limit:  int32(*limit),
+		Sort:   *sort,
+		Offset: int32(*page * *limit),
 	}
 
-	posts, err := s.db.GetPostsForUser(ctx, userPostsParams)
+	posts, err := s.db.GetPostsForUserPaginated(ctx, params)
 	if err != nil {
 		return err
 	}
@@ -502,6 +509,7 @@ func handlerBrowse(s *state, cmd command, user database.User) error {
 		return nil
 	}
 
+	fmt.Printf("\nPage %d - sorted by %s\n", *page, *sort)
 	for _, post := range posts {
 		fmt.Printf("\n%s\n%s\nPublished: %s\n", post.Title, post.Url,
 			func() string {
@@ -516,6 +524,41 @@ func handlerBrowse(s *state, cmd command, user database.User) error {
 
 func handlerPosts(s *state, cmd command, user database.User) error {
 	//ctx := context.Background()
+	return nil
+}
+
+func handlerHelp(s *state, cmd command) error {
+	fmt.Println(`Gator – a tiny console RSS reader
+
+USAGE:
+    gator <command> [arguments]
+
+CORE COMMANDS
+    register <name>           create a new user
+    login    <name>           switch to an existing user
+    users                     list users
+
+    addfeed  <title> <url>    add & follow a new RSS feed
+    follow   <url>            follow an existing feed
+    unfollow <url>            stop following a feed
+    feeds                     list all feeds
+    following                 list feeds you follow
+
+    agg     <interval>        background aggregation (e.g. 30s, 2m)
+    browse  [--limit]         view recent posts (default 2)
+            [--sort]          sort by time or title (default time)
+            [--page]          view page #  (default 0 - which is first page)
+UTILITY
+    help                      print this screen
+    reset                     **danger** wipe users / feeds / posts
+
+EXAMPLES
+    gator register alice
+    gator login alice
+    gator addfeed "Hacker News" https://news.ycombinator.com/rss
+    gator agg 1m
+    gator browse --limit=10 --sort=time --page=2
+	`)
 	return nil
 }
 
@@ -546,9 +589,17 @@ func main() {
 	appCommands.register("unfollow", middlewareLoggedIn(handlerUnfollow))
 	appCommands.register("posts", middlewareLoggedIn(handlerPosts))
 	appCommands.register("browse", middlewareLoggedIn(handlerBrowse))
+	appCommands.register("help", handlerHelp)
+
 	args := os.Args[1:]
+
+	if len(args) == 0 {
+		_ = handlerHelp(appState, command{})
+		return
+	}
+
 	if len(args) < 2 && args[0] == "login" {
-		fmt.Println("Usage: Gator login {username}")
+		fmt.Println("Usage: gator login {username}")
 		os.Exit(1)
 	}
 	cmd := args[0]

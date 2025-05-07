@@ -46,10 +46,10 @@ func (q *Queries) CreatePost(ctx context.Context, arg CreatePostParams) error {
 const getPostsForUser = `-- name: GetPostsForUser :many
 SELECT p.id, p.created_at, p.updated_at, p.title, p.url, p.description, p.published_at, p.feed_id
 FROM posts AS p
-   JOIN feed_follows AS ff ON ff.feed_id = p.feed_id
-WHERE ff.user_id = $1                 -- <-- user ID here
+JOIN feed_follows AS ff ON ff.feed_id = p.feed_id
+WHERE ff.user_id = $1
 ORDER BY
-    p.published_at DESC NULLS LAST, -- newest first
+    p.published_at DESC NULLS LAST,
     p.created_at  DESC
 LIMIT  $2
 `
@@ -61,6 +61,63 @@ type GetPostsForUserParams struct {
 
 func (q *Queries) GetPostsForUser(ctx context.Context, arg GetPostsForUserParams) ([]Post, error) {
 	rows, err := q.db.QueryContext(ctx, getPostsForUser, arg.UserID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Post
+	for rows.Next() {
+		var i Post
+		if err := rows.Scan(
+			&i.ID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.Title,
+			&i.Url,
+			&i.Description,
+			&i.PublishedAt,
+			&i.FeedID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const getPostsForUserPaginated = `-- name: GetPostsForUserPaginated :many
+SELECT p.id, p.created_at, p.updated_at, p.title, p.url, p.description, p.published_at, p.feed_id
+FROM posts AS p
+JOIN feed_follows AS ff ON ff.feed_id = p.feed_id
+WHERE ff.user_id = $1
+ORDER BY
+    CASE WHEN $3::text = 'time' THEN p.published_at END DESC,
+    CASE WHEN $3::text = 'title' THEN p.title END ASC,
+    p.published_at DESC
+LIMIT $2
+OFFSET $4
+`
+
+type GetPostsForUserPaginatedParams struct {
+	UserID  uuid.UUID
+	Limit   int32
+	Sort string
+	Offset  int32
+}
+
+func (q *Queries) GetPostsForUserPaginated(ctx context.Context, arg GetPostsForUserPaginatedParams) ([]Post, error) {
+	rows, err := q.db.QueryContext(ctx, getPostsForUserPaginated,
+		arg.UserID,
+		arg.Limit,
+		arg.Sort,
+		arg.Offset,
+	)
 	if err != nil {
 		return nil, err
 	}
